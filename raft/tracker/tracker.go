@@ -114,6 +114,7 @@ func (c *Config) Clone() Config {
 // ProgressTracker tracks the currently active configuration and the information
 // known about the nodes and learners in it. In particular, it tracks the match
 // index for each peer which in turn allows reasoning about the committed index.
+// 日志复制跟踪
 type ProgressTracker struct {
 	Config
 
@@ -121,6 +122,7 @@ type ProgressTracker struct {
 
 	Votes map[uint64]bool
 
+	//滑动窗口最大值
 	MaxInflight int
 }
 

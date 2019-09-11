@@ -256,11 +256,12 @@ func (x *ConfChangeType) UnmarshalJSON(data []byte) error {
 }
 func (ConfChangeType) EnumDescriptor() ([]byte, []int) { return fileDescriptorRaft, []int{3} }
 
+//日志记录
 type Entry struct {
-	Term             uint64    `protobuf:"varint,2,opt,name=Term" json:"Term"`
-	Index            uint64    `protobuf:"varint,3,opt,name=Index" json:"Index"`
-	Type             EntryType `protobuf:"varint,1,opt,name=Type,enum=raftpb.EntryType" json:"Type"`
-	Data             []byte    `protobuf:"bytes,4,opt,name=Data" json:"Data,omitempty"`
+	Term             uint64    `protobuf:"varint,2,opt,name=Term" json:"Term"`						//该Entry对应的任期号
+	Index            uint64    `protobuf:"varint,3,opt,name=Index" json:"Index"`					//该Entry的索引号
+	Type             EntryType `protobuf:"varint,1,opt,name=Type,enum=raftpb.EntryType" json:"Type"`//日志类型
+	Data             []byte    `protobuf:"bytes,4,opt,name=Data" json:"Data,omitempty"`				//日志内容
 	XXX_unrecognized []byte    `json:"-"`
 }
 
@@ -292,18 +293,44 @@ func (m *Snapshot) String() string            { return proto.CompactTextString(m
 func (*Snapshot) ProtoMessage()               {}
 func (*Snapshot) Descriptor() ([]byte, []int) { return fileDescriptorRaft, []int{2} }
 
+//Message:所有消息的抽象
 type Message struct {
+	//类型，共19种
 	Type             MessageType `protobuf:"varint,1,opt,name=type,enum=raftpb.MessageType" json:"type"`
+
+	//该Message的目标节点ID
 	To               uint64      `protobuf:"varint,2,opt,name=to" json:"to"`
+
+	//发送该Message的节点ID
 	From             uint64      `protobuf:"varint,3,opt,name=from" json:"from"`
+
+	//发送该消息的节点Term值
 	Term             uint64      `protobuf:"varint,4,opt,name=term" json:"term"`
+
+	//该消息携带的第一天Entry的Term值
 	LogTerm          uint64      `protobuf:"varint,5,opt,name=logTerm" json:"logTerm"`
+
+	//索引值 根据Type的不同，有不同的含义
 	Index            uint64      `protobuf:"varint,6,opt,name=index" json:"index"`
+
+	//该Message携带的日志记录
 	Entries          []Entry     `protobuf:"bytes,7,rep,name=entries" json:"entries"`
+
+	//发送该消息节点的提交位置
 	Commit           uint64      `protobuf:"varint,8,opt,name=commit" json:"commit"`
+
+	//在传输快照时，该字段保存了快照数据
 	Snapshot         Snapshot    `protobuf:"bytes,9,opt,name=snapshot" json:"snapshot"`
+
+	//主要用于响应类型的消息，表示是否拒绝收到的消息。例如：Follow节点收到Leader节点发来的MsgApp
+	//消息，如果MsgApp消息携带的Entry记录并不能直接追加到本利的raftLog中，则会将响应消息的Reject
+	// 字段设置为true，并且会在RejectHint字段中记录本地日志的Entry索引值，供Leader参考
 	Reject           bool        `protobuf:"varint,10,opt,name=reject" json:"reject"`
+
+	//同上，Follow节点拒绝Leader后，会将本地日志的索引值记录在该字段，供Leader参考
 	RejectHint       uint64      `protobuf:"varint,11,opt,name=rejectHint" json:"rejectHint"`
+
+	//消息携带的一些上下文信息。例如：该消息是否与Leader节点转移相关
 	Context          []byte      `protobuf:"bytes,12,opt,name=context" json:"context,omitempty"`
 	XXX_unrecognized []byte      `json:"-"`
 }
