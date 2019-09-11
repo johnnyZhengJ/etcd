@@ -47,27 +47,41 @@ type Storage interface {
 	// TODO(tbg): split this into two interfaces, LogStorage and StateStorage.
 
 	// InitialState returns the saved HardState and ConfState information.
+	// 返回之前保存的HardState和ConfState
 	InitialState() (pb.HardState, pb.ConfState, error)
-	// Entries returns a slice of log entries in the range [lo,hi).
+
+	// Entries returns a slice of log entries in the range （lo,hi].
 	// MaxSize limits the total size of the log entries returned, but
 	// Entries returns at least one entry if any.
+	// 返回Entry的切片，范围在(lo，hi] 左开右闭区间(因为ents[0]是一个空的Entry),maxSize限制了返回的Entry切片的
+	// 字节上限，该方法最少都会返回至少一条Entry
 	Entries(lo, hi, maxSize uint64) ([]pb.Entry, error)
+
 	// Term returns the term of entry i, which must be in the range
 	// [FirstIndex()-1, LastIndex()]. The term of the entry before
 	// FirstIndex is retained for matching purposes even though the
 	// rest of that entry may not be available.
+	//查询指定（I） Entry的Term编号
 	Term(i uint64) (uint64, error)
+
+
 	// LastIndex returns the index of the last entry in the log.
+	// 返回storage中最后一条Entry索引号
 	LastIndex() (uint64, error)
+
 	// FirstIndex returns the index of the first log entry that is
 	// possibly available via Entries (older entries have been incorporated
 	// into the latest Snapshot; if storage only contains the dummy entry the
 	// first log entry is not available).
+	//返回Entry[1]索引号
 	FirstIndex() (uint64, error)
+
 	// Snapshot returns the most recent snapshot.
 	// If snapshot is temporarily unavailable, it should return ErrSnapshotTemporarilyUnavailable,
 	// so raft state machine could know that Storage needs some time to prepare
 	// snapshot and call Snapshot later.
+	// 返回最近的一次快照数据,如果快照不存在或者不可用，则抛出ErrSnapshotTemporarilyUnavailable异常，
+	// raft状态机就知道快照还没准备好，需要等一会再来访问
 	Snapshot() (pb.Snapshot, error)
 }
 
@@ -107,6 +121,7 @@ func (ms *MemoryStorage) SetHardState(st pb.HardState) error {
 }
 
 // Entries implements the Storage interface.
+
 func (ms *MemoryStorage) Entries(lo, hi, maxSize uint64) ([]pb.Entry, error) {
 	ms.Lock()
 	defer ms.Unlock()
@@ -171,18 +186,23 @@ func (ms *MemoryStorage) Snapshot() (pb.Snapshot, error) {
 
 // ApplySnapshot overwrites the contents of this Storage object with
 // those of the given snapshot.
+// 该方法使用参数中指定的快照，覆盖了原有的快照(ms.snapshot)
 func (ms *MemoryStorage) ApplySnapshot(snap pb.Snapshot) error {
 	ms.Lock()
 	defer ms.Unlock()
 
 	//handle check for old snapshot being applied
+	// 比较当前快照与传入的快照的新旧程度,如果当前快照较新，则抛出ErrSnapOutOfDate错误
 	msIndex := ms.snapshot.Metadata.Index
 	snapIndex := snap.Metadata.Index
 	if msIndex >= snapIndex {
 		return ErrSnapOutOfDate
 	}
 
+	//更新ms.snapshot
 	ms.snapshot = snap
+
+	//重置ms.ents，此时ents中，只有一个空的Entry实例
 	ms.ents = []pb.Entry{{Term: snap.Metadata.Term, Index: snap.Metadata.Index}}
 	return nil
 }
@@ -191,18 +211,22 @@ func (ms *MemoryStorage) ApplySnapshot(snap pb.Snapshot) error {
 // can be used to reconstruct the state at that point.
 // If any configuration changes have been made since the last compaction,
 // the result of the last ApplyConfChange must be passed in.
+// i是新建的快照包含的最大索引值，cs是当前集群状态，data是新建快照的具体数据
 func (ms *MemoryStorage) CreateSnapshot(i uint64, cs *pb.ConfState, data []byte) (pb.Snapshot, error) {
 	ms.Lock()
 	defer ms.Unlock()
+	//边界检查，i必须大于当前快照的最大索引值
 	if i <= ms.snapshot.Metadata.Index {
 		return pb.Snapshot{}, ErrSnapOutOfDate
 	}
 
+	//边界检查，i必须小于当前ms中的最大索引值
 	offset := ms.ents[0].Index
 	if i > ms.lastIndex() {
 		raftLogger.Panicf("snapshot %d is out of bound lastindex(%d)", i, ms.lastIndex())
 	}
 
+	//更新快照的元数据
 	ms.snapshot.Metadata.Index = i
 	ms.snapshot.Metadata.Term = ms.ents[i-offset].Term
 	if cs != nil {
@@ -215,10 +239,12 @@ func (ms *MemoryStorage) CreateSnapshot(i uint64, cs *pb.ConfState, data []byte)
 // Compact discards all log entries prior to compactIndex.
 // It is the application's responsibility to not attempt to compact an index
 // greater than raftLog.applied.
+// 压缩，压缩指定compactIndex索引号之前的Entry
 func (ms *MemoryStorage) Compact(compactIndex uint64) error {
 	ms.Lock()
 	defer ms.Unlock()
 	offset := ms.ents[0].Index
+	// 参数compactIndex 边界检查
 	if compactIndex <= offset {
 		return ErrCompacted
 	}
@@ -247,6 +273,7 @@ func (ms *MemoryStorage) Append(entries []pb.Entry) error {
 	defer ms.Unlock()
 
 	first := ms.firstIndex()
+	//last := entries[len(entries)-1].Index
 	last := entries[0].Index + uint64(len(entries)) - 1
 
 	// shortcut if there is no new entry.
@@ -260,11 +287,14 @@ func (ms *MemoryStorage) Append(entries []pb.Entry) error {
 
 	offset := entries[0].Index - ms.ents[0].Index
 	switch {
+	//有重复的部分，去重后再追加上
 	case uint64(len(ms.ents)) > offset:
 		ms.ents = append([]pb.Entry{}, ms.ents[:offset]...)
 		ms.ents = append(ms.ents, entries...)
+	//没有重复的部分，刚好接上，直接追加
 	case uint64(len(ms.ents)) == offset:
 		ms.ents = append(ms.ents, entries...)
+	//有跳过的部分，抛出异常
 	default:
 		raftLogger.Panicf("missing log entry [last: %d, append at: %d]",
 			ms.lastIndex(), entries[0].Index)
