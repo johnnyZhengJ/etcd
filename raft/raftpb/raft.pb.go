@@ -83,6 +83,7 @@ func (EntryType) EnumDescriptor() ([]byte, []int) { return fileDescriptorRaft, [
 type MessageType int32
 
 const (
+	//Follow节点选举计时器超时，此时会创建MsgHup消息，同时调用raft.step()方法
 	MsgHup            MessageType = 0
 	MsgBeat           MessageType = 1
 	MsgProp           MessageType = 2

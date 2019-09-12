@@ -342,7 +342,7 @@ type raft struct {
 	//距离上次心跳的时间
 	heartbeatElapsed int
 
-	//检查当前集群中的节点是否超过半数
+	//检查checkQuorum模式
 	checkQuorum bool
 
 	//预选举结果，超过半数的节点同意选举，才能发起，否则：如果Follower节点因为自身原因与Leader失联，该Follower会
@@ -768,6 +768,7 @@ func (r *raft) becomeCandidate() {
 
 func (r *raft) becomePreCandidate() {
 	// TODO(xiangli) remove the panic when the raft implementation is stable
+	//禁止直接从Leader转化为PreCandidate
 	if r.state == StateLeader {
 		panic("invalid transition [leader -> pre-candidate]")
 	}
@@ -887,10 +888,15 @@ func (r *raft) Step(m pb.Message) error {
 	switch {
 	case m.Term == 0:
 		// local message
+		//本地消息，不做处理
 	case m.Term > r.Term:
 		if m.Type == pb.MsgVote || m.Type == pb.MsgPreVote {
 			force := bytes.Equal(m.Context, []byte(campaignTransfer))
+			//checkQuorum超过半数，r.lead不为空,选举为超时
 			inLease := r.checkQuorum && r.lead != None && r.electionElapsed < r.electionTimeout
+			//如果消息是leader发的(m.Context)，则强制参加选举。
+			//如果消息不是leader发的(!force),当前节点开启了checkQuorum模式且当前节点的leader不为空，且当前节点选举未超时
+			//则不参与此次选举
 			if !force && inLease {
 				// If a server receives a RequestVote request within the minimum election timeout
 				// of hearing from a current leader, it does not update its term or grant its vote
@@ -901,6 +907,7 @@ func (r *raft) Step(m pb.Message) error {
 		}
 		switch {
 		case m.Type == pb.MsgPreVote:
+			//如果是MsgPreVote，则不会引起当前节点的状态改变
 			// Never change our term in response to a PreVote
 		case m.Type == pb.MsgPreVoteResp && !m.Reject:
 			// We send pre-vote requests with a term in our future. If the
@@ -959,21 +966,27 @@ func (r *raft) Step(m pb.Message) error {
 
 	switch m.Type {
 	case pb.MsgHup:
+		//只有非Leader节点才会处理MsgHup消息
 		if r.state != StateLeader {
+			//判断自身是否能够升级为leader
 			if !r.promotable() {
 				r.logger.Warningf("%x is unpromotable and can not campaign; ignoring MsgHup", r.id)
 				return nil
 			}
+			//获取已提交但是未应用的Entry列表
 			ents, err := r.raftLog.slice(r.raftLog.applied+1, r.raftLog.committed+1, noLimit)
 			if err != nil {
 				r.logger.Panicf("unexpected error getting unapplied entries (%v)", err)
 			}
+
+			//检测是否有未应用的EntryConfChange 记录，如果有就放弃发起选举的机会
 			if n := numOfPendingConf(ents); n != 0 && r.raftLog.committed > r.raftLog.applied {
 				r.logger.Warningf("%x cannot campaign at term %d since there are still %d pending configuration changes to apply", r.id, r.Term, n)
 				return nil
 			}
 
 			r.logger.Infof("%x is starting a new election at term %d", r.id, r.Term)
+			//检查是否开启了preVote模式
 			if r.preVote {
 				r.campaign(campaignPreElection)
 			} else {
